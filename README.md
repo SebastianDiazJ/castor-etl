@@ -76,7 +76,7 @@ castor-etl/
 
 ### 1. Clonar y configurar
 ```bash
-git clone https://github.com/tu-usuario/castor-etl.git
+git clone https://github.com/SebastianDiazJ/castor-etl.git
 cd castor-etl
 cp .env .env
 # Editar .env con las credenciales reales
@@ -119,3 +119,6 @@ El archivo `azure-pipelines.yml` ejecuta automáticamente en cada Pull Request:
 1. **Lint**: Verificación de estilo con flake8.
 2. **Tests**: Ejecución completa de pytest con reporte de cobertura.
 3. **Build**: Construcción de la imagen Docker (solo en PRs).
+
+
+Sebastian Diaz Jimenez
