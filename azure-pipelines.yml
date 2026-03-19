@@ -1,0 +1,80 @@
+# Azure Pipeline - CI para Castor ETL
+# Se ejecuta automáticamente en Pull Requests
+
+trigger:
+  branches:
+    include:
+      - develop
+      - main
+      - release/*
+
+pr:
+  branches:
+    include:
+      - develop
+      - main
+
+pool:
+  vmImage: "ubuntu-latest"
+
+variables:
+  PYTHON_VERSION: "3.11"
+  PIP_CACHE_DIR: $(Pipeline.Workspace)/.pip
+
+stages:
+  - stage: Test
+    displayName: "Lint & Tests"
+    jobs:
+      - job: RunTests
+        displayName: "Run Unit & Integration Tests"
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: "$(PYTHON_VERSION)"
+            displayName: "Configurar Python $(PYTHON_VERSION)"
+
+          - script: |
+              python -m pip install --upgrade pip
+              pip install -r requirements.txt
+              pip install -r requirements-dev.txt
+            displayName: "Instalar dependencias"
+
+          - script: |
+              python -m flake8 src/ --max-line-length=100 --statistics
+            displayName: "Lint con flake8"
+            continueOnError: false
+
+          - script: |
+              python -m pytest tests/ \
+                --junitxml=test-results.xml \
+                --cov=src \
+                --cov-report=xml:coverage.xml \
+                --cov-report=term-missing \
+                -v
+            displayName: "Ejecutar tests con cobertura"
+
+          - task: PublishTestResults@2
+            inputs:
+              testResultsFormat: "JUnit"
+              testResultsFiles: "test-results.xml"
+              failTaskOnFailedTests: true
+            displayName: "Publicar resultados de tests"
+
+          - task: PublishCodeCoverageResults@2
+            inputs:
+              codeCoverageTool: "Cobertura"
+              summaryFileLocation: "coverage.xml"
+            displayName: "Publicar cobertura de código"
+
+  - stage: Build
+    displayName: "Build Docker Image"
+    dependsOn: Test
+    condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
+    jobs:
+      - job: DockerBuild
+        displayName: "Construir imagen Docker"
+        steps:
+          - script: |
+              docker build -t castor-etl:$(Build.BuildId) .
+              echo "Imagen construida exitosamente"
+            displayName: "Docker build"

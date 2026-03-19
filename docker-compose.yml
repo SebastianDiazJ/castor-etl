@@ -1,0 +1,88 @@
+version: "3.8"
+
+services:
+  # ─── Base de datos fuente (simula sistema legado MSSQL) ──────────────────
+  source-db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: castor-source-mssql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "${SOURCE_DB_PASSWORD:-Str0ngP@ssw0rd!}"
+      MSSQL_PID: "Developer"
+    ports:
+      - "1433:1433"
+    volumes:
+      - source_data:/var/opt/mssql
+    healthcheck:
+      test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$${MSSQL_SA_PASSWORD}" -Q "SELECT 1" -C -N || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - castor-network
+
+  # ─── Base de datos destino (Postgres para Power BI) ──────────────────────
+  target-db:
+    image: postgres:16-alpine
+    container_name: castor-target-postgres
+    environment:
+      POSTGRES_DB: "${TARGET_DB_NAME:-analytics}"
+      POSTGRES_USER: "${TARGET_DB_USER:-postgres}"
+      POSTGRES_PASSWORD: "${TARGET_DB_PASSWORD:-postgres_secret}"
+    ports:
+      - "5433:5432" # Mapeamos el puerto 5432 del contenedor al 5433 del host para evitar conflictos
+    volumes:
+      - target_data:/var/lib/postgresql/data
+      - ./scripts/init_postgres.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TARGET_DB_USER:-postgres}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - castor-network
+
+  # ─── Pipeline ETL ───────────────────────────────────────────────────────
+  etl-pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: castor-etl-pipeline
+    depends_on:
+      source-db:
+        condition: service_healthy
+      target-db:
+        condition: service_healthy
+    environment:
+      # Fuente (MSSQL)
+      SOURCE_DB_HOST: source-db
+      SOURCE_DB_PORT: "1433"
+      SOURCE_DB_NAME: "${SOURCE_DB_NAME:-legacy_financial}"
+      SOURCE_DB_USER: "${SOURCE_DB_USER:-sa}"
+      SOURCE_DB_PASSWORD: "${SOURCE_DB_PASSWORD:-Str0ngP@ssw0rd!}"
+      SOURCE_DB_DRIVER: "mssql+pyodbc"
+      SOURCE_DB_POOL_SIZE: "5"
+      SOURCE_DB_MAX_OVERFLOW: "10"
+      # Destino (Postgres)
+      TARGET_DB_HOST: target-db
+      TARGET_DB_PORT: "5432"
+      TARGET_DB_NAME: "${TARGET_DB_NAME:-analytics}"
+      TARGET_DB_USER: "${TARGET_DB_USER:-postgres}"
+      TARGET_DB_PASSWORD: "${TARGET_DB_PASSWORD:-postgres_secret}"
+      TARGET_DB_POOL_SIZE: "5"
+      TARGET_DB_MAX_OVERFLOW: "10"
+      # ETL
+      ETL_CHUNK_SIZE: "${ETL_CHUNK_SIZE:-5000}"
+      ETL_MAX_WORKERS: "${ETL_MAX_WORKERS:-4}"
+      ETL_RETRY_MAX_ATTEMPTS: "5"
+      ETL_LOG_LEVEL: "${ETL_LOG_LEVEL:-INFO}"
+    networks:
+      - castor-network
+
+volumes:
+  source_data:
+  target_data:
+
+networks:
+  castor-network:
+    driver: bridge
